@@ -1,21 +1,21 @@
 substitutions:
-  friendly_name: Console Fan
+  friendly_name: Rack Fan
 
 esphome:
-  name: console-fan
+  name: rack_fan
+  friendly_name: $friendly_name
+  name_add_mac_suffix: false
+  project:
+    name: esphome.web
+    version: '1.0'
+esp32:
+  board: wemos_d1_mini32
+  framework:
+    type: arduino
 
 # Throttle writing parameters to the internal flash memory to reduce ESP memory wear / degradation
 preferences:
   flash_write_interval: 15min
-
- 
-#########################
-# ESP32 AND NETWORK SETUP
-
-esp32:
-  board: nodemcu-32s
-  framework:
-    type: arduino
 
 # pid climate log update is noisy, dial it back to warn
 logger:
@@ -24,16 +24,23 @@ logger:
     climate: ERROR
     dht: WARN
 
-# default HA integration, OTA updater and backup http web portal
+# Enable Home Assistant API
 api:
-ota:
-wifi:
+  encryption:
+    key: "CLAVE_AQUI"
 
-  # Read the wifi/pass from secrets.yaml:
-  # wifi_ssid: "My Wifi XX"
-  # wifi_password: "XXXXXXX"
+ota:
+  - platform: esphome
+    password: "CLAVE_OTA_AQUI"
+
+wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Rackfan Fallback Hotspot"
+    password: "0123456789"
 
 number:
 
@@ -166,7 +173,7 @@ sensor:
 
   - platform: pulse_counter
     pin: 
-      number: GPIO25   # Connect to any input PIN on the ESP
+      number: GPIO32   # Connect to any input PIN on the ESP - FAN TACH
       mode: INPUT_PULLUP
     unit_of_measurement: 'RPM'
     id: fan_speed
@@ -215,9 +222,9 @@ sensor:
 
   # GET TEMP/HUMIDITY FROM DHT11
   - platform: dht
-    pin: GPIO33
+    pin: GPIO27
     temperature:
-      name: "Temperature"
+      name: "Temperatura"
       id: console_fan_temperature
       accuracy_decimals: 3
 
@@ -229,7 +236,7 @@ sensor:
              send_every: 1
 
     humidity:
-      name: "Humidity"
+      name: "Humedad"
       id: console_fan_humidity
 
     # the DHT11 can only be read every 1s. Use 1.3s to be safe.
@@ -239,7 +246,7 @@ sensor:
   # also be updated for displaying on the frontend. 
   # See proxy_output.
   - platform: template
-    name: "Fan Speed (PWM Voltage)"
+    name: "Velocidad ventilador (Voltaje PWM)"
     unit_of_measurement: "%"
     id: fan_speed_pwm_voltage
 
@@ -248,7 +255,7 @@ output:
   # ledc is the name of the pwm output system on an esp32
   - platform: ledc
     id: console_fan_speed
-    pin: GPIO13
+    pin: GPIO2
 
     # 25KHz is standard PC fan frequency, minimises buzzing
     frequency: "25000 Hz" 
@@ -324,7 +331,7 @@ climate:
     # The extents of the HA Thermostat
     visual:
       min_temperature: 20 °C
-      max_temperature: 50 °C
+      max_temperature: 45 °C
   
     # See the README for setting up these parameters.
     # These are over ridden by the number templates above.
@@ -374,4 +381,5 @@ button:
   name: "PID Climate Autotune"
   on_press: 
     - climate.pid.autotune: console_thermostat
+    
     
