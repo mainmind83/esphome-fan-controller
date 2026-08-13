@@ -157,7 +157,7 @@ sensor:
             id: uptime_human
             # Custom C++ code to generate the result
             state: !lambda |-
-              int seconds = round(id(uptime_sensor).raw_state);
+              int seconds = round(id(uptime_sensor).get_raw_state());
               int days = seconds / (24 * 3600);
               seconds = seconds % (24 * 3600);
               int hours = seconds / 3600;
