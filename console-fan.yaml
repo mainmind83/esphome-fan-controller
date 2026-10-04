@@ -5,7 +5,8 @@ substitutions:
   # They are exposed to Home Assistant as number entities (Configuration
   # section of the device) and saved to flash. After the first boot, edit
   # them from Home Assistant: changing them here will not override the
-  # saved values. The "Calibrate Fan RPM" button measures the RPM ones.
+  # saved values. The "Calibrate Fan" button measures the RPM ones and the
+  # min power.
   fan_rpm_min: "0"       # RPM at 0% PWM (0 if your fan stops at 0%)
   fan_rpm_max: "2000"    # RPM at 100% PWM
   fan_pwm_min: "13"      # % below which the fan speed does not change
@@ -249,7 +250,14 @@ text_sensor:
     icon: mdi:fan-alert
     update_interval: 60s
     lambda: |-
-      if (id(fan_calibrating)) return {"Calibrating RPM"};
+      if (id(fan_calibrating)) {
+        switch (id(calibration_phase)) {
+          case 1: return {"Calibrating: min RPM"};
+          case 2: return {"Calibrating: min power (" + to_string(id(calibration_pwm_step)) + "%)"};
+          case 3: return {"Calibrating: max RPM"};
+          default: return {"Calibrating"};
+        }
+      }
       if (id(pid_autotuning)) return {"Tuning PID"};
       float rpm = id(fan_speed).state;
       float pwm = id(fan_speed_pwm_voltage).state;
@@ -266,7 +274,7 @@ text_sensor:
       if (off) return {rpm_min > 0 ? "Minimum (does not stop)" : "Spinning without command"};
       return {"Regulating"};
 
-  # Result of the last RPM calibration
+  # Result of the last fan calibration
   - platform: template
     name: $friendly_name Fan Calibration
     id: fan_calibration_result
@@ -612,9 +620,9 @@ button:
   on_press:
     - climate.pid.reset_integral_term: console_thermostat
 
-# Measures the RPM of fan 1 at 0% and 100% PWM and saves them (~2 min)
+# Measures fan 1: RPM at 0% and 100% PWM and the min effective power (~7 min)
 - platform: template
-  name: "Calibrate Fan RPM"
+  name: "Calibrate Fan"
   icon: mdi:tune-vertical
   entity_category: config
   on_press:
@@ -637,6 +645,18 @@ globals:
     type: float
     restore_value: no
     initial_value: '0'
+  - id: calibration_phase
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: calibration_pwm_step
+    type: int
+    restore_value: no
+    initial_value: '5'
+  - id: calibration_pwm_min_result
+    type: float
+    restore_value: no
+    initial_value: '-1'
   - id: pid_autotuning
     type: bool
     restore_value: no
@@ -655,18 +675,22 @@ globals:
     initial_value: '0'
 
 script:
-  # RPM calibration. For each end: set the PWM, wait 20s for the fan to
-  # settle, force a tachometer reading to discard the transition, then take
-  # the real one over a clean 30s window. Validate before saving.
+  # Fan calibration: min RPM, min effective power and max RPM.
+  # For each measurement: set the PWM, wait for the fan to settle, force a
+  # tachometer reading to discard the transition, then take the real one
+  # over a clean window. Validate before saving.
   - id: fan_calibrate
     mode: single
     then:
       - globals.set:
           id: fan_calibrating
           value: 'true'
-      - component.update: fan_status
 
       # Minimum: 0% PWM
+      - globals.set:
+          id: calibration_phase
+          value: '1'
+      - component.update: fan_status
       - text_sensor.template.publish:
           id: fan_calibration_result
           state: "Running: measuring minimum"
@@ -681,7 +705,53 @@ script:
           id: fan_calibration_rpm_min
           value: !lambda return id(fan_speed).state;
 
+      # Power sweep from 5% to 50% in 5% steps, with raw PWM (min/max power
+      # scaling disabled). Min power = last step where the RPM had not risen
+      # yet; for a fan with 0 RPM mode, the first step where it starts.
+      - lambda: |-
+          id(calibration_phase) = 2;
+          id(calibration_pwm_step) = 5;
+          id(calibration_pwm_min_result) = -1;
+          id(console_fan_speed).set_min_power(0.0);
+          id(console_fan_speed).set_max_power(1.0);
+      - while:
+          condition:
+            lambda: return id(calibration_pwm_min_result) < 0 && id(calibration_pwm_step) <= 50;
+          then:
+            - lambda: |-
+                char buf[48];
+                snprintf(buf, sizeof(buf), "Running: finding min power (%d%%)", id(calibration_pwm_step));
+                id(fan_calibration_result).publish_state(buf);
+                id(console_fan_speed).set_level(id(calibration_pwm_step) / 100.0);
+                id(fan_speed_pwm_voltage).publish_state(id(calibration_pwm_step));
+            - component.update: fan_status
+            - delay: 10s
+            - component.update: fan_speed
+            - delay: 20s
+            - component.update: fan_speed
+            - lambda: |-
+                float mn = id(fan_calibration_rpm_min);
+                float rpm = id(fan_speed).state;
+                if (!isnan(rpm) && !isnan(mn)) {
+                  // "Rising": above the min by 50 RPM or 8%, whichever is
+                  // larger, so reading noise does not count as a change
+                  bool rising = (mn < 100) ? (rpm >= 100)
+                                           : (rpm > mn + fmaxf(50.0f, mn * 0.08f));
+                  if (rising)
+                    id(calibration_pwm_min_result) =
+                        (mn < 100) ? id(calibration_pwm_step) : id(calibration_pwm_step) - 5;
+                }
+                id(calibration_pwm_step) += 5;
+      # Restore the configured limits before measuring the maximum
+      - lambda: |-
+          id(console_fan_speed).set_min_power(id(fan_pwm_min_n).state / 100.0);
+          id(console_fan_speed).set_max_power(id(fan_pwm_max_n).state / 100.0);
+
       # Maximum: 100% PWM (scaled to "Fan Max Power")
+      - globals.set:
+          id: calibration_phase
+          value: '3'
+      - component.update: fan_status
       - text_sensor.template.publish:
           id: fan_calibration_result
           state: "Running: measuring maximum"
@@ -715,9 +785,19 @@ script:
             c2.set_value(mx);
             c2.perform();
             res = "OK: " + to_string((int) mn) + " - " + to_string((int) mx) + " RPM";
+            float pm = id(calibration_pwm_min_result);
+            if (pm >= 0) {
+              auto c3 = id(fan_pwm_min_n).make_call();
+              c3.set_value(pm);
+              c3.perform();
+              res += ", min power " + to_string((int) pm) + "%";
+            } else {
+              res += ", min power unchanged (no rise up to 50%)";
+            }
           }
           id(fan_calibration_result).publish_state(res);
           id(fan_calibrating) = false;
+          id(calibration_phase) = 0;
           // Hand control back to the PID (or to manual, if it is on)
           float out = -id(console_thermostat).get_output_value();
           if (isnan(out)) out = 0;

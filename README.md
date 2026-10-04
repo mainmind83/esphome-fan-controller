@@ -25,7 +25,7 @@ The main features are:
 - my system uses two fans for extra cooling. Depending on how much air you need to draw through your enclosed space you could use 1, 2, 4, 10 .. n fans.
 - one esp32 can control up to 10 independent enclosures each with separate temperature sensors and fans. You're only limited by the Amps of your 12v Power Bricks and the 10 pwm pins on your ESP32.
 - **manual speed control** over ride if you don't want to use PID Control
-- **fan RPM calibration and health status**: one button measures your fan's real min/max RPM, and a status sensor tells you what the fan is actually doing (including detecting a failed or degrading fan)
+- **fan calibration and health status**: one button measures your fan's real min/max RPM and its min effective power, and a status sensor tells you what the fan is actually doing (including detecting a failed or degrading fan)
 - **PID tuning persists across reboots**, and the **autotune result is saved and shown in Home Assistant** instead of only in the logs
 - **no coding is needed**. Just some configuration in YAML files. In fact this repo only contains 1 file ``config-fan.yaml``.
 - **No resistors, capacitors or difficult soldering needed**. The fan and the temperature sensor plug straight onto the pins of the ESP32. Although I did solder mount mine on a perfboard for cleanliness and put it in a case.
@@ -157,13 +157,17 @@ The fan characteristics (min/max RPM and min/max PWM power) are exposed to Home 
 
 Not every PWM fan stops at 0% PWM. Many keep spinning at their minimum speed (500-700 RPM is common), so "0%" in the PWM sensor does not mean the fan is stopped. Check your fan's datasheet for a "0 RPM" or "0dB" mode if you need it to stop completely.
 
-Press **Calibrate Fan RPM** (Configuration section, takes about 2 minutes). It drives fan 1 to 0% and then to 100% PWM, waits for the speed to settle, measures the RPM over a clean window and saves them to *Fan Min RPM* and *Fan Max RPM*. The PID and manual control are paused while it runs. The result is shown in the *Fan Calibration* sensor (Diagnostic section).
+Press **Calibrate Fan** (Configuration section, takes about 7 minutes). On fan 1 it:
 
-Then, with *Manual Fan Speed* on, lower the speed step by step and find the PWM % at which the RPM starts to rise above the minimum. Set that as *Fan Min Power*: below it the PID would be changing a value that has no effect on the fan.
+1. Measures the RPM at 0% PWM and saves it to *Fan Min RPM*.
+2. Sweeps the raw PWM from 5% to 50% in 5% steps and saves to *Fan Min Power* the last step where the RPM had not risen yet (above the minimum by 50 RPM or 8%, whichever is larger). Below that power the PID would be changing a value that has no effect on the fan. For a fan with a 0 RPM mode, it saves the first step where the fan starts.
+3. Measures the RPM at 100% PWM and saves it to *Fan Max RPM*.
+
+Each measurement waits for the speed to settle and discards the transition reading. The PID and manual control are paused while it runs, and *Fan Status* shows the current phase. The result is shown in the *Fan Calibration* sensor (Diagnostic section), e.g. `OK: 690 - 1600 RPM, min power 25%`.
 
 Two sensors then show the truth on the dashboard:
 
-- **Fan Status**: `Regulating`, `Minimum (does not stop)`, `Stopped`, `Calibrating RPM`, `Tuning PID`, and two alerts: `WARNING: spinning slow` (below half its minimum RPM: a bearing or motor degrading) and `FAULT: stopped` (0 RPM on a fan that should never stop). These are worth an automation that notifies your phone.
+- **Fan Status**: `Regulating`, `Minimum (does not stop)`, `Stopped`, `Calibrating: ...` (with the current phase), `Tuning PID`, and two alerts: `WARNING: spinning slow` (below half its minimum RPM: a bearing or motor degrading) and `FAULT: stopped` (0 RPM on a fan that should never stop). These are worth an automation that notifies your phone.
 - **Fan Actual Speed**: the measured RPM as a % of the max RPM. Unlike *Fan Speed (PWM Voltage)*, which is the command sent to the fan, this is what the fan is really doing.
 
 ### Setup your wifi details
