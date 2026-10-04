@@ -406,12 +406,6 @@ sensor:
     state_class: measurement
     accuracy_decimals: 2
 
-  - platform: template
-    name: $friendly_name is in deadband
-    id: in_deadband_term
-    entity_category: diagnostic
-    accuracy_decimals: 0
-
   # GET TEMP/HUMIDITY FROM DHT11
   - platform: dht
     pin: GPIO33
@@ -459,6 +453,15 @@ sensor:
       float rpm_max = id(fan_rpm_max_n).state;
       if (isnan(rpm) || isnan(rpm_max) || rpm_max <= 0) return NAN;
       return rpm / rpm_max * 100.0;
+
+# Whether the PID is inside the deadband (on/off). It used to be a numeric
+# sensor reporting 0.0/1.0, which HA treated as text (logbook noise).
+binary_sensor:
+  - platform: template
+    name: $friendly_name is in deadband
+    id: in_deadband_term
+    icon: mdi:target
+    entity_category: diagnostic
 
 output:
   # Wire this pin (13) into the PWM pin of your 12v fan
@@ -534,7 +537,7 @@ climate:
       - sensor.template.publish:
           id: o_term
           state: !lambda 'return -id(console_thermostat).get_output_value()* 100.0;'
-      - sensor.template.publish:
+      - binary_sensor.template.publish:
           id: in_deadband_term
           state: !lambda 'return id(console_thermostat).in_deadband();'
       - sensor.template.publish:
