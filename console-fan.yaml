@@ -128,6 +128,9 @@ number:
     id: pid_threshold_low
     icon: mdi:chart-bell-curve
     entity_category: config
+    # Box instead of slider: an accidental swipe on a slider can silently
+    # leave the PID stuck in the deadband
+    mode: box
     restore_value: true
     initial_value: -1.0
     min_value: -20
@@ -143,6 +146,7 @@ number:
     id: pid_threshold_high
     icon: mdi:chart-bell-curve
     entity_category: config
+    mode: box
     restore_value: true
     initial_value: 0.4
     min_value: 0
@@ -158,6 +162,7 @@ number:
     id: pid_ki_multiplier
     icon: mdi:chart-bell-curve
     entity_category: config
+    mode: box
     restore_value: true
     initial_value: 0.04
     min_value: 0
@@ -263,7 +268,8 @@ text_sensor:
       float pwm = id(fan_speed_pwm_voltage).state;
       const float rpm_min = id(fan_rpm_min_n).state;
       if (isnan(rpm)) return {"No reading"};
-      bool off = isnan(pwm) || pwm <= 0;
+      // < 1%: the PID output is rarely exactly 0 (it leaves residues like 0.1%)
+      bool off = isnan(pwm) || pwm < 1.0;
       if (rpm < 100) {
         // Stopped: only normal for fans that support 0 RPM
         if (off && rpm_min == 0) return {"Stopped"};
